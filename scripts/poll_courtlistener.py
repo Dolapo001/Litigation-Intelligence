@@ -58,9 +58,9 @@ def process_docket(client: CourtListenerClient, docket: dict) -> None:
     
     # Extract court code from URL if necessary
     court_raw = docket.get("court", settings.TARGET_COURT)
-    if court_raw and "courts/" in str(court_raw):
-        # Extract 'dcd' from '.../courts/dcd/'
-        court = str(court_raw).rstrip("/").split("/")[-1]
+    if court_raw and "/courts/" in str(court_raw):
+        # Extract 'dcd' from '.../courts/dcd/?format=json'
+        court = str(court_raw).split("/courts/")[-1].split("/")[0]
     else:
         court = court_raw or settings.TARGET_COURT
 
