@@ -25,6 +25,9 @@ def save_filing(
     summary: str,
     pdf_path: str,
     date_filed=None,
+    court_name: str = "",
+    court_full_name: str = "",
+    court_citation: str = "",
 ) -> "Filing":
     """
     Upsert a filing record.
@@ -36,6 +39,9 @@ def save_filing(
         docket_id=docket_id,
         defaults=dict(
             court=court,
+            court_name=court_name,
+            court_full_name=court_full_name,
+            court_citation=court_citation,
             case_name=case_name,
             plaintiff=plaintiff,
             defendant=defendant,

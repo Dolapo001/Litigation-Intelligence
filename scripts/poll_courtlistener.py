@@ -96,9 +96,15 @@ def process_docket(client: CourtListenerClient, docket: dict) -> None:
 
     date_filed = docket.get("date_filed")
 
+    # --- Fetch court metadata (cached per client instance) ---
+    court_meta = client.fetch_court(court)
+    court_name = (court_meta.get("short_name") or "") if court_meta else ""
+    court_full_name = (court_meta.get("full_name") or "") if court_meta else ""
+    court_citation = (court_meta.get("citation_string") or "") if court_meta else ""
+
     logger.info("─" * 60)
     logger.info("New Filing Detected")
-    logger.info("  Court    : %s", court)
+    logger.info("  Court    : %s (%s)", court, court_full_name or "unknown")
     logger.info("  Case     : %s", case_name)
     logger.info("  Docket ID: %s", docket_id)
 
@@ -130,6 +136,9 @@ def process_docket(client: CourtListenerClient, docket: dict) -> None:
         save_filing(
             docket_id=docket_id,
             court=court,
+            court_name=court_name,
+            court_full_name=court_full_name,
+            court_citation=court_citation,
             case_name=case_name,
             plaintiff=fallback_p,
             defendant=fallback_d,
@@ -195,6 +204,9 @@ def process_docket(client: CourtListenerClient, docket: dict) -> None:
     save_filing(
         docket_id=docket_id,
         court=court,
+        court_name=court_name,
+        court_full_name=court_full_name,
+        court_citation=court_citation,
         case_name=case_name,
         plaintiff=plaintiff,
         defendant=defendant,

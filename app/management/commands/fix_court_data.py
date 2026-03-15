@@ -10,8 +10,9 @@ Two categories of records are fixed:
 
 1. **Bad court codes** — any record whose `court` field looks like a full URL
    (contains "http") or is clearly a query-string artefact (e.g. "?format=json").
-   The correct short code is extracted from the URL, or the field is left as-is
-   when it already looks like a valid short code.
+   The correct short code is extracted from the URL; when no code can be
+   extracted (e.g. "?format=json" with no court segment), the value falls back
+   to settings.TARGET_COURT.
 
 2. **Missing plaintiff / defendant** — any record where one or both party names
    are blank is given a best-effort value derived from `case_name` by splitting
@@ -24,6 +25,7 @@ Usage::
 """
 from urllib.parse import urlparse
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from app.storage.models import Filing
@@ -78,7 +80,18 @@ class Command(BaseCommand):
             # --- 1. Fix bad court codes ---
             if _is_bad_court(filing.court):
                 new_court = _extract_court_code(filing.court)
-                if new_court and new_court != filing.court:
+                # Fall back to TARGET_COURT when the raw value carries no code
+                # (e.g. "?format=json" — the URL contained no court segment).
+                if not new_court:
+                    new_court = settings.TARGET_COURT
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"  [court]  id={filing.id} docket={filing.docket_id}: "
+                            f"could not parse court from {filing.court!r} — "
+                            f"falling back to TARGET_COURT={new_court!r}"
+                        )
+                    )
+                if new_court != filing.court:
                     self.stdout.write(
                         f"  [court]  id={filing.id} docket={filing.docket_id}: "
                         f"{filing.court!r}  →  {new_court!r}"
@@ -87,13 +100,6 @@ class Command(BaseCommand):
                         filing.court = new_court
                     court_fixed += 1
                     changed = True
-                else:
-                    self.stdout.write(
-                        self.style.WARNING(
-                            f"  [court]  id={filing.id} docket={filing.docket_id}: "
-                            f"could not parse court from {filing.court!r} — skipping"
-                        )
-                    )
 
             # --- 2. Fix missing plaintiff / defendant from case_name ---
             if (not filing.plaintiff or not filing.defendant) and " v. " in filing.case_name:
@@ -122,7 +128,8 @@ class Command(BaseCommand):
                     changed = True
 
             if changed and apply:
-                filing.save(update_fields=["court", "plaintiff", "defendant"])
+                filing.save(update_fields=["court", "plaintiff", "defendant",
+                                           "court_name", "court_full_name", "court_citation"])
 
         self.stdout.write("")
         self.stdout.write(
