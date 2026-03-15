@@ -1,0 +1,11 @@
+django>=4.2,<5.0
+djangorestframework>=3.14
+psycopg2-binary>=2.9
+requests>=2.31
+PyMuPDF>=1.23
+pdf2image>=1.16
+pytesseract>=0.3.10
+transformers>=4.35
+torch>=2.1
+Pillow>=10.0
+python-dotenv>=1.0
