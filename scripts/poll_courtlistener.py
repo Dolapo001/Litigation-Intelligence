@@ -21,6 +21,7 @@ import sys
 import time
 import logging
 from pathlib import Path
+from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
 # Bootstrap Django — must happen before any app imports
@@ -49,6 +50,36 @@ logging.basicConfig(
 logger = logging.getLogger("poller")
 
 
+def _extract_court_code(court_raw: str, default: str) -> str:
+    """
+    Return a clean court code from a raw value that may be a full URL or plain code.
+
+    CourtListener sometimes returns the court field as a hyperlinked URL:
+        "https://www.courtlistener.com/api/rest/v3/courts/dcd/?format=json"
+    This function extracts just the short code ("dcd") and falls back to
+    `default` when the code cannot be determined.
+    """
+    if not court_raw:
+        return default
+
+    if "/courts/" in court_raw:
+        # Use urllib.parse to safely extract the path, then find the segment
+        # after "courts".  This handles both trailing-slash and query-string
+        # variants without fragile manual splitting.
+        path = urlparse(court_raw).path          # "/api/rest/v3/courts/dcd/"
+        segments = [s for s in path.split("/") if s]
+        try:
+            idx = segments.index("courts")
+            code = segments[idx + 1] if idx + 1 < len(segments) else ""
+        except (ValueError, IndexError):
+            code = ""
+        return code if code else default
+
+    # Plain code — strip any accidental query-string fragment and whitespace.
+    plain = court_raw.split("?")[0].strip()
+    return plain if plain else default
+
+
 def process_docket(client: CourtListenerClient, docket: dict) -> None:
     """
     Full pipeline for a single newly detected docket.
@@ -56,13 +87,12 @@ def process_docket(client: CourtListenerClient, docket: dict) -> None:
     docket_id = str(docket["id"])
     case_name = docket.get("case_name", "Unknown v. Unknown")
     
-    # Extract court code from URL if necessary
+    # Extract court code from URL if necessary.
+    # CourtListener returns court as a hyperlink URL, e.g.:
+    #   "https://www.courtlistener.com/api/rest/v3/courts/dcd/?format=json"
+    # We need just the short code ("dcd").
     court_raw = docket.get("court", settings.TARGET_COURT)
-    if court_raw and "/courts/" in str(court_raw):
-        # Extract 'dcd' from '.../courts/dcd/?format=json'
-        court = str(court_raw).split("/courts/")[-1].split("/")[0]
-    else:
-        court = court_raw or settings.TARGET_COURT
+    court = _extract_court_code(str(court_raw) if court_raw else "", settings.TARGET_COURT)
 
     date_filed = docket.get("date_filed")
 
