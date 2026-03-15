@@ -210,3 +210,4 @@ The architecture is designed to scale incrementally:
 2024-01-15 14:32:06 [INFO] poller —   Summary  : Plaintiff alleges breach of an employment contract…
 2024-01-15 14:32:06 [INFO] poller —   ✓ Saved to database.
 ```
+# Litigation-Intelligence
