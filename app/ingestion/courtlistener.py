@@ -22,6 +22,9 @@ class CourtListenerClient:
         if api_token:
             self.session.headers["Authorization"] = f"Token {api_token}"
         self.session.headers["User-Agent"] = "LitigationIntelligencePrototype/1.0"
+        # In-process cache: court_id → court metadata dict.
+        # Avoids repeated API calls for the same court across dockets.
+        self._court_cache: dict[str, dict] = {}
 
     def _get(self, path: str, params: dict = None) -> dict:
         url = f"{self.base_url}/{path.lstrip('/')}"
@@ -65,6 +68,26 @@ class CourtListenerClient:
             return self._get(f"/recap-documents/{document_id}/")
         except requests.RequestException as exc:
             logger.error("Failed to fetch RECAP document %s: %s", document_id, exc)
+            return None
+
+    def fetch_court(self, court_id: str) -> Optional[dict]:
+        """
+        Return court metadata for `court_id` (e.g. "dcd"), using an
+        in-process cache so each court is fetched at most once per run.
+
+        Returns a dict with at minimum:
+            short_name, full_name, citation_string, jurisdiction
+        Returns None on failure.
+        """
+        if court_id in self._court_cache:
+            return self._court_cache[court_id]
+        try:
+            data = self._get(f"/courts/{court_id}/")
+            self._court_cache[court_id] = data
+            logger.info("Fetched court metadata for '%s': %s", court_id, data.get("full_name"))
+            return data
+        except requests.RequestException as exc:
+            logger.warning("Could not fetch court metadata for '%s': %s", court_id, exc)
             return None
 
     def download_pdf(self, pdf_url: str, dest_path: str) -> bool:

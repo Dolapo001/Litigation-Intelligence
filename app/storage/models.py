@@ -7,6 +7,9 @@ class Filing(models.Model):
     """
     docket_id = models.CharField(max_length=128, unique=True, db_index=True)
     court = models.CharField(max_length=64)
+    court_name = models.CharField(max_length=256, blank=True)       # short_name, e.g. "District of Columbia"
+    court_full_name = models.CharField(max_length=512, blank=True)  # full_name, e.g. "District Court, District of Columbia"
+    court_citation = models.CharField(max_length=64, blank=True)    # citation_string, e.g. "D.D.C."
     case_name = models.CharField(max_length=512)
     plaintiff = models.CharField(max_length=256, blank=True)
     defendant = models.CharField(max_length=256, blank=True)
