@@ -55,7 +55,15 @@ def process_docket(client: CourtListenerClient, docket: dict) -> None:
     """
     docket_id = str(docket["id"])
     case_name = docket.get("case_name", "Unknown v. Unknown")
-    court = docket.get("court", settings.TARGET_COURT)
+    
+    # Extract court code from URL if necessary
+    court_raw = docket.get("court", settings.TARGET_COURT)
+    if court_raw and "courts/" in str(court_raw):
+        # Extract 'dcd' from '.../courts/dcd/'
+        court = str(court_raw).rstrip("/").split("/")[-1]
+    else:
+        court = court_raw or settings.TARGET_COURT
+
     date_filed = docket.get("date_filed")
 
     logger.info("─" * 60)
@@ -83,13 +91,18 @@ def process_docket(client: CourtListenerClient, docket: dict) -> None:
     if not recap_entry:
         logger.warning("  → No RECAP documents found. Skipping PDF download.")
         log_ingestion(docket_id, "skipped", "No RECAP documents.")
-        # Still save minimal metadata so the docket is tracked
+        # Try to parse at least plaintiff/defendant from case name for better metadata
+        fallback_p, fallback_d = "", ""
+        if " v. " in case_name:
+            parts = case_name.split(" v. ", 1)
+            fallback_p, fallback_d = parts[0].strip(), parts[1].strip()
+
         save_filing(
             docket_id=docket_id,
             court=court,
             case_name=case_name,
-            plaintiff="",
-            defendant="",
+            plaintiff=fallback_p,
+            defendant=fallback_d,
             summary="No complaint document available.",
             pdf_path="",
             date_filed=date_filed,
@@ -132,6 +145,15 @@ def process_docket(client: CourtListenerClient, docket: dict) -> None:
     entities = extract_entities(text)
     plaintiff = entities["plaintiff"]
     defendant = entities["defendant"]
+
+    # Fallback to parsing case_name if extraction failed
+    if (not plaintiff or not defendant) and " v. " in case_name:
+        parts = case_name.split(" v. ", 1)
+        if not plaintiff:
+            plaintiff = parts[0].strip()
+        if not defendant:
+            defendant = parts[1].strip()
+
     logger.info("  Plaintiff: %s", plaintiff or "(not found)")
     logger.info("  Defendant: %s", defendant or "(not found)")
 
