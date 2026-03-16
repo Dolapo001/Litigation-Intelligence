@@ -221,9 +221,10 @@ def process_docket(client: CourtListenerClient, docket: dict) -> None:
 def run_poll_cycle(client: CourtListenerClient) -> None:
     """Run one poll cycle: detect new dockets and process each one."""
     logger.info("Polling CourtListener for new %s dockets…", settings.TARGET_COURT)
+    since_minutes = max(10, (settings.POLL_INTERVAL_SECONDS // 60) + 5)
     dockets = client.fetch_recent_dockets(
         court=settings.TARGET_COURT,
-        since_minutes=10080,  # 1 week back
+        since_minutes=since_minutes,
     )
     logger.info("Found %d docket(s).", len(dockets))
     for docket in dockets:
