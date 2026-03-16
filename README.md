@@ -126,13 +126,17 @@ Returns the most recently ingested filings.
     "id": 1,
     "docket_id": "12345",
     "court": "nysd",
+    "court_name": "S.D.N.Y.",
+    "court_full_name": "District Court, Southern District of New York",
+    "court_citation": "S.D.N.Y.",
     "case_name": "Smith v. Acme Corp",
     "plaintiff": "John Smith",
     "defendant": "Acme Corp",
     "summary": "Plaintiff alleges breach of an employment contract and seeks damages related to wrongful termination.",
     "pdf_path": "data/filings/12345.pdf",
     "date_filed": "2024-01-15",
-    "created_at": "2024-01-15T14:32:00Z"
+    "created_at": "2024-01-15T14:32:00Z",
+    "updated_at": "2024-01-15T14:32:00Z"
   }
 ]
 ```
@@ -210,4 +214,3 @@ The architecture is designed to scale incrementally:
 2024-01-15 14:32:06 [INFO] poller —   Summary  : Plaintiff alleges breach of an employment contract…
 2024-01-15 14:32:06 [INFO] poller —   ✓ Saved to database.
 ```
-# Litigation-Intelligence
