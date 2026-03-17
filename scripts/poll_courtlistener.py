@@ -6,10 +6,16 @@ Litigation Intelligence — Court Filing Poller
 A standalone worker script that:
   1. Polls CourtListener for new SDNY dockets.
   2. Downloads the associated complaint PDF.
-  3. Extracts text (native PDF → OCR fallback).
-  4. Extracts plaintiff/defendant entities.
-  5. Generates a short AI summary.
-  6. Persists everything to PostgreSQL via Django ORM.
+  3. FAST PATH  — digital PDFs: extract text natively, enrich synchronously.
+  4. SLOW PATH  — scanned PDFs: save partial record immediately, enqueue
+                  async OCR + NLP Celery task (never blocks the poll cycle).
+  5. Enrichment pipeline (sync or via Celery):
+       a. Legal NER      (dslim/bert-base-NER + legal entity ruler)
+       b. Summarization  (distilBART-cnn-12-6, 3× faster than BART-large)
+       c. Case type      (zero-shot, facebook/bart-large-mnli)
+       d. Embeddings     (all-MiniLM-L6-v2, stored for similarity search)
+       e. Risk scoring   (rule-based; XGBoost roadmap)
+  6. Persists structured intelligence JSON to PostgreSQL.
 
 Run this script independently of the Django dev server:
     python scripts/poll_courtlistener.py
@@ -37,9 +43,12 @@ django.setup()
 from django.conf import settings
 
 from app.ingestion.courtlistener import CourtListenerClient
-from app.processing.pdf_extractor import extract_text
-from app.extraction.entities import extract_entities
+from app.processing.pdf_extractor import extract_text, extract_text_native
 from app.summarization.summarizer import generate_summary
+from app.nlp.legal_ner import extract_legal_entities
+from app.nlp.case_classifier import classify_case
+from app.nlp.embeddings import generate_embedding, find_similar_filings
+from app.nlp.risk_scorer import score_filing
 from app.storage.repository import filing_exists, save_filing, log_ingestion
 
 logging.basicConfig(
@@ -174,18 +183,85 @@ def process_docket(client: CourtListenerClient, docket: dict) -> None:
         log_ingestion(docket_id, "error", f"PDF download failed after 3 attempts: {pdf_url}")
         return
 
-    # --- Extract text ---
-    text = extract_text(str(pdf_path), min_length=settings.PDF_TEXT_MIN_LENGTH)
+    # --- FAST PATH: try native text extraction ---
+    native_text = extract_text_native(str(pdf_path))
+    is_scanned = len(native_text.strip()) < settings.PDF_TEXT_MIN_LENGTH
+
+    if is_scanned:
+        # SLOW PATH: scanned PDF detected
+        # 1. Save partial record immediately so API returns something useful
+        # 2. Enqueue async OCR task — this never blocks the poll cycle
+        logger.info("  → Scanned PDF detected (native text: %d chars). Queuing OCR.", len(native_text.strip()))
+        save_filing(
+            docket_id=docket_id,
+            court=court,
+            court_name=court_name,
+            court_full_name=court_full_name,
+            court_citation=court_citation,
+            case_name=case_name,
+            plaintiff="",
+            defendant="",
+            summary="OCR processing in progress — check back shortly.",
+            pdf_path=str(pdf_path),
+            date_filed=date_filed,
+            processing_status="ocr_queued",
+        )
+        # Enqueue async OCR (runs in Celery 'ocr' queue, ~15-40 s)
+        try:
+            from app.tasks.ocr_task import run_ocr
+            run_ocr.apply_async(
+                args=[docket_id, str(pdf_path)],
+                queue="ocr",
+            )
+            log_ingestion(docket_id, "success", f"OCR queued: {case_name}")
+            logger.info("  ✓ Partial record saved; OCR task enqueued.")
+        except Exception as exc:
+            logger.warning("  → Celery unavailable (%s). Running OCR synchronously.", exc)
+            # Fallback: run OCR synchronously if Celery/Redis not available
+            text = extract_text(str(pdf_path), min_length=settings.PDF_TEXT_MIN_LENGTH)
+            _run_full_enrichment(
+                docket_id=docket_id, text=text, court=court,
+                court_name=court_name, court_full_name=court_full_name,
+                court_citation=court_citation, case_name=case_name,
+                pdf_path=str(pdf_path), date_filed=date_filed,
+            )
+        return
+
+    # FAST PATH: digital PDF with embedded text
+    text = native_text
+    _run_full_enrichment(
+        docket_id=docket_id, text=text, court=court,
+        court_name=court_name, court_full_name=court_full_name,
+        court_citation=court_citation, case_name=case_name,
+        pdf_path=str(pdf_path), date_filed=date_filed,
+    )
+
+
+def _run_full_enrichment(
+    docket_id: str,
+    text: str,
+    court: str,
+    court_name: str,
+    court_full_name: str,
+    court_citation: str,
+    case_name: str,
+    pdf_path: str,
+    date_filed,
+) -> None:
+    """
+    Run the complete NLP enrichment pipeline synchronously.
+    Used for the fast path (native PDFs) and as a Celery-unavailable fallback.
+    """
     if not text:
         log_ingestion(docket_id, "error", "Text extraction yielded empty result.")
         return
 
-    # --- Extract entities ---
-    entities = extract_entities(text)
+    # --- Legal NER (replaces regex-only extraction) ---
+    entities = extract_legal_entities(text)
     plaintiff = entities["plaintiff"]
     defendant = entities["defendant"]
 
-    # Fallback to parsing case_name if extraction failed
+    # Fallback to case_name parsing if NER found nothing
     if (not plaintiff or not defendant) and " v. " in case_name:
         parts = case_name.split(" v. ", 1)
         if not plaintiff:
@@ -193,14 +269,42 @@ def process_docket(client: CourtListenerClient, docket: dict) -> None:
         if not defendant:
             defendant = parts[1].strip()
 
-    logger.info("  Plaintiff: %s", plaintiff or "(not found)")
-    logger.info("  Defendant: %s", defendant or "(not found)")
+    logger.info("  Plaintiff : %s", plaintiff or "(not found)")
+    logger.info("  Defendant : %s", defendant or "(not found)")
+    logger.info("  Statutes  : %s", ", ".join(entities["statutes"][:3]) or "(none)")
+    logger.info("  Damages   : %s", ", ".join(entities["damages"][:3]) or "(none)")
 
-    # --- Generate summary ---
+    # --- Summarization (distilBART, ~14 s CPU) ---
     summary = generate_summary(text, max_input_chars=settings.SUMMARY_MAX_CHARS)
-    logger.info("  Summary  : %s", summary[:120] + ("…" if len(summary) > 120 else ""))
+    logger.info("  Summary   : %s", summary[:120] + ("…" if len(summary) > 120 else ""))
 
-    # --- Persist ---
+    # --- Case type classification (Bloomberg Law parity) ---
+    classification = classify_case(summary or text[:1024])
+    logger.info(
+        "  Case type : %s (%.0f%% confidence, method=%s)",
+        classification["primary_type"],
+        classification["confidence"] * 100,
+        classification["method"],
+    )
+
+    # --- Sentence embedding + precedent similarity ---
+    embedding = generate_embedding(summary or text[:2000])
+    similar_cases = find_similar_filings(embedding, top_k=5) if embedding else []
+    top_similarity = similar_cases[0]["score"] if similar_cases else 0.0
+    logger.info("  Precedents: %d similar cases found.", len(similar_cases))
+
+    # --- Risk scoring ---
+    risk = score_filing(
+        case_type=classification["primary_type"],
+        court=court,
+        damages=entities["damages"],
+        statutes=entities["statutes"],
+        precedent_similarity=top_similarity,
+        similar_cases=similar_cases,
+    )
+    logger.info("  Risk score: %d/10 — %s", risk["score"], risk["predicted_outcome"][:80])
+
+    # --- Persist full intelligence record ---
     save_filing(
         docket_id=docket_id,
         court=court,
@@ -211,8 +315,19 @@ def process_docket(client: CourtListenerClient, docket: dict) -> None:
         plaintiff=plaintiff,
         defendant=defendant,
         summary=summary,
-        pdf_path=str(pdf_path),
+        pdf_path=pdf_path,
         date_filed=date_filed,
+        case_type=classification["primary_type"],
+        case_type_confidence=classification["confidence"],
+        allegations=entities["damages"] + entities["statutes"],
+        statutes=entities["statutes"],
+        damages=entities["damages"],
+        risk_score=risk["score"],
+        risk_breakdown=risk["breakdown"],
+        predicted_outcome=risk["predicted_outcome"],
+        embedding=embedding,
+        similar_cases=similar_cases,
+        processing_status="complete",
     )
     log_ingestion(docket_id, "success", f"Processed: {case_name}")
     logger.info("  ✓ Saved to database.")

@@ -1,11 +1,39 @@
+# Web framework
 django>=4.2,<5.0
 djangorestframework>=3.14
+
+# Database
 psycopg2-binary>=2.9
+
+# HTTP client
 requests>=2.31
+
+# PDF processing — native extraction
 PyMuPDF>=1.23
+
+# PDF processing — OCR fallback
 pdf2image>=1.16
 pytesseract>=0.3.10
+Pillow>=10.0
+
+# NLP — transformer models
+# distilbart-cnn-12-6: 3x faster than bart-large-cnn (55% fewer params, 2% ROUGE loss)
+# dslim/bert-base-NER: legal NER transformer (replaces spaCy generic model)
+# facebook/bart-large-mnli: zero-shot case classification (Bloomberg Law parity)
 transformers>=4.35
 torch>=2.1
-Pillow>=10.0
+
+# NLP — sentence embeddings + similarity search
+# all-MiniLM-L6-v2: 384-dim embeddings, fast CPU inference, strong MTEB score
+sentence-transformers>=2.2
+
+# Async task queue (OCR + NLP enrichment pipeline)
+celery>=5.3
+redis>=5.0
+
+# Environment configuration
 python-dotenv>=1.0
+
+# Testing
+pytest>=7.4
+pytest-django>=4.7

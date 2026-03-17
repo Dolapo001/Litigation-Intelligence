@@ -21,6 +21,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "app.storage",
     "app.api",
+    "app.tasks",
 ]
 
 MIDDLEWARE = [
@@ -69,3 +70,14 @@ POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "300"))
 PDF_TEXT_MIN_LENGTH = int(os.environ.get("PDF_TEXT_MIN_LENGTH", "500"))
 SUMMARY_MAX_CHARS = int(os.environ.get("SUMMARY_MAX_CHARS", "2000"))
 DATA_DIR = BASE_DIR / "data" / "filings"
+
+# ---------------------------------------------------------------------------
+# Celery / Redis
+# ---------------------------------------------------------------------------
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_TASK_ALWAYS_EAGER = os.environ.get("CELERY_TASK_ALWAYS_EAGER", "False") == "True"
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_ACCEPT_CONTENT = ["json"]
